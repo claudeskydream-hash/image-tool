@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频管理 - AI Image Studio</title>
+    <style>
+        :root {
+            --primary: #7c3aed;
+            --primary-light: #a78bfa;
+            --primary-dark: #5b21b6;
+            --bg: #0f0f1a;
+            --bg-card: #1a1a2e;
+            --bg-input: #16162a;
+            --border: #2a2a4a;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+            --error: #ef4444;
+            --warning: #f59e0b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px 16px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 22px;
+            font-weight: 600;
+        }
+
+        .stats {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 9px 18px;
+            border-radius: 10px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background .2s, opacity .2s;
+        }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-danger { background: var(--error); color: #fff; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+        .btn-outline:hover { border-color: var(--primary); color: var(--primary-light); }
+        .btn-sm { padding: 5px 12px; font-size: 13px; }
+
+        .video-list { display: flex; flex-direction: column; gap: 10px; }
+
+        .video-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            transition: border-color .2s;
+        }
+        .video-item:hover { border-color: var(--primary); }
+
+        .video-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+            flex: 1;
+        }
+        .video-name {
+            font-size: 15px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .video-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .video-actions { flex-shrink: 0; margin-left: 16px; }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; opacity: .4; }
+        .empty-state p { font-size: 15px; }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 1000;
+            opacity: 0;
+            transition: transform .3s, opacity .3s;
+            pointer-events: none;
+        }
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        .toast.success { background: var(--success); color: #fff; }
+        .toast.error { background: var(--error); color: #fff; }
+
+        /* 确认弹窗 */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,.6);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 999;
+        }
+        .modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
+            max-width: 380px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal h3 { font-size: 17px; margin-bottom: 10px; }
+        .modal p { font-size: 14px; color: var(--text-muted); margin-bottom: 22px; }
+        .modal .btn-group { display: flex; gap: 10px; }
+        .modal .btn-group .btn { flex: 1; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>视频管理</h1>
+        <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="toolbar" id="toolbar">
+        <button class="btn btn-outline" onclick="refreshList()">刷新列表</button>
+        <button class="btn btn-danger" id="deleteAllBtn" onclick="confirmDeleteAll()">一键删除</button>
+    </div>
+
+    <div class="video-list" id="videoList"></div>
+</div>
+
+<!-- 确认弹窗 -->
+<div class="modal-overlay hidden" id="modalOverlay">
+    <div class="modal">
+        <h3 id="modalTitle">确认删除</h3>
+        <p id="modalMsg">确定要删除吗？此操作不可恢复。</p>
+        <div class="btn-group">
+            <button class="btn btn-outline" onclick="closeModal()">取消</button>
+            <button class="btn btn-danger" id="modalConfirmBtn">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+let videos = [];
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function formatDate(isoStr) {
+    const d = new Date(isoStr);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function fetchVideos() {
+    try {
+        const resp = await fetch('/api/videos');
+        const data = await resp.json();
+        videos = data.videos || [];
+        renderList();
+    } catch (e) {
+        showToast('获取视频列表失败', 'error');
+    }
+}
+
+function renderList() {
+    const listEl = document.getElementById('videoList');
+    const statsEl = document.getElementById('stats');
+    const deleteAllBtn = document.getElementById('deleteAllBtn');
+
+    if (videos.length === 0) {
+        listEl.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">🎬</div>
+                <p>暂无视频文件</p>
+            </div>`;
+        statsEl.textContent = '';
+        deleteAllBtn.disabled = true;
+        return;
+    }
+
+    const totalSize = videos.reduce((sum, v) => sum + v.size, 0);
+    statsEl.textContent = `共 ${videos.length} 个视频，总计 ${formatSize(totalSize)}`;
+    deleteAllBtn.disabled = false;
+
+    listEl.innerHTML = videos.map((v, i) => `
+        <div class="video-item">
+            <div class="video-info">
+                <div class="video-name" title="${v.name}">${v.name}</div>
+                <div class="video-meta">
+                    <span>${formatDate(v.date)}</span>
+                    <span>${formatSize(v.size)}</span>
+                </div>
+            </div>
+            <div class="video-actions" style="display:flex;gap:8px;">
+                <a class="btn btn-primary btn-sm" href="/api/video-file/${encodeURIComponent(v.name)}" download="${v.name}" style="text-decoration:none;">下载</a>
+                <button class="btn btn-outline btn-sm" onclick="confirmDelete(${i})">删除</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function refreshList() {
+    fetchVideos();
+    showToast('已刷新', 'success');
+}
+
+// --- Modal ---
+let modalCallback = null;
+
+function showModal(title, msg, onConfirm) {
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalMsg').textContent = msg;
+    document.getElementById('modalOverlay').classList.remove('hidden');
+    modalCallback = onConfirm;
+    document.getElementById('modalConfirmBtn').onclick = () => {
+        const cb = modalCallback;
+        closeModal();
+        if (cb) cb();
+    };
+}
+
+function closeModal() {
+    document.getElementById('modalOverlay').classList.add('hidden');
+    modalCallback = null;
+}
+
+// --- Delete ---
+function confirmDelete(index) {
+    const v = videos[index];
+    if (!v) return;
+    showModal('确认删除', `确定删除 "${v.name}" 吗？`, () => deleteVideo(v.name));
+}
+
+async function deleteVideo(name) {
+    try {
+        const resp = await fetch('/api/delete-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('已删除', 'success');
+            fetchVideos();
+        } else {
+            showToast(data.error || '删除失败', 'error');
+        }
+    } catch (e) {
+        showToast('删除失败', 'error');
+    }
+}
+
+function confirmDeleteAll() {
+    if (videos.length === 0) return;
+    showModal('一键删除', `确定删除全部 ${videos.length} 个视频吗？此操作不可恢复！`, () => deleteAllVideos());
+}
+
+async function deleteAllVideos() {
+    try {
+        const resp = await fetch('/api/delete-all-videos', { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`已删除 ${data.deleted} 个视频`, 'success');
+            fetchVideos();
+        } else {
+            showToast(data.error || '删除失败', 'error');
+        }
+    } catch (e) {
+        showToast('删除失败', 'error');
+    }
+}
+
+// --- Toast ---
+function showToast(msg, type) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `toast ${type}`;
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// 点击遮罩关闭弹窗
+document.getElementById('modalOverlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+});
+
+// 初始化
+fetchVideos();
+</script>
+</body>
+</html>

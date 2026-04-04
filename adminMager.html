@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>后台管理 - AI Image Studio</title>
+    <style>
+        :root {
+            --primary: #7c3aed;
+            --primary-light: #a78bfa;
+            --primary-dark: #5b21b6;
+            --bg: #0f0f1a;
+            --bg-card: #1a1a2e;
+            --bg-input: #16162a;
+            --border: #2a2a4a;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+            --error: #ef4444;
+            --warning: #f59e0b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            width: 100%;
+            max-width: 420px;
+            margin: 16px;
+        }
+        h1 {
+            font-size: 20px;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-bottom: 28px;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            margin-top: 16px;
+        }
+        label:first-of-type { margin-top: 0; }
+        input {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-input);
+            color: var(--text);
+            font-size: 15px;
+            outline: none;
+            transition: border-color .2s;
+        }
+        input:focus { border-color: var(--primary); }
+        button {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: none;
+            background: var(--primary);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 24px;
+            transition: background .2s, opacity .2s;
+        }
+        button:hover { background: var(--primary-dark); }
+        button:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+        .error-msg {
+            color: var(--error);
+            font-size: 13px;
+            text-align: center;
+            margin-top: 12px;
+            min-height: 20px;
+        }
+        .hidden { display: none !important; }
+
+        /* 充值区 */
+        .recharge-section { margin-top: 20px; }
+        .balance-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 14px;
+            background: var(--bg-input);
+            border-radius: 10px;
+            margin-top: 12px;
+            border: 1px solid var(--border);
+        }
+        .balance-row .label { color: var(--text-muted); font-size: 13px; }
+        .balance-row .value { font-weight: 700; font-size: 18px; color: var(--success); }
+        .recharge-result {
+            margin-top: 12px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            text-align: center;
+            min-height: 0;
+        }
+        .recharge-result.ok {
+            background: rgba(16,185,129,.12);
+            color: var(--success);
+            border: 1px solid rgba(16,185,129,.25);
+        }
+        .recharge-result.fail {
+            background: rgba(239,68,68,.12);
+            color: var(--error);
+            border: 1px solid rgba(239,68,68,.25);
+        }
+        .divider {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 24px 0 0;
+        }
+        .logout-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 13px;
+            padding: 8px;
+            margin-top: 16px;
+        }
+        .logout-btn:hover { border-color: var(--error); color: var(--error); background: transparent; }
+    </style>
+</head>
+<body>
+
+<!-- 登录区 -->
+<div class="card" id="loginCard">
+    <h1>后台管理</h1>
+    <p class="subtitle">AI Image Studio 管理员登录</p>
+    <label>用户名</label>
+    <input type="text" id="adminUser" placeholder="请输入管理员用户名" autocomplete="username">
+    <label>密码</label>
+    <input type="password" id="adminPass" placeholder="请输入密码" autocomplete="current-password">
+    <button id="loginBtn" onclick="doLogin()">登录</button>
+    <div class="error-msg" id="loginError"></div>
+</div>
+
+<!-- 充值区 -->
+<div class="card hidden" id="rechargeCard">
+    <h1>金币充值</h1>
+    <p class="subtitle">管理用户金币余额</p>
+    <label>用户名</label>
+    <input type="text" id="targetUser" placeholder="输入要充值的用户名">
+    <label>充值数量</label>
+    <input type="number" id="rechargeAmount" placeholder="输入充值金币数量" min="1">
+    <button onclick="doRecharge()">确认充值</button>
+    <div id="rechargeResult" class="recharge-result"></div>
+    <hr class="divider">
+    <button class="logout-btn" onclick="doLogout()">退出登录</button>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let adminToken = localStorage.getItem('adminToken');
+
+// 页面加载时检查已有 session
+(async function init() {
+    if (!adminToken) return;
+    try {
+        const resp = await fetch('/api/admin-check', {
+            headers: { 'Authorization': 'Bearer ' + adminToken }
+        });
+        if (resp.ok) {
+            showRecharge();
+            return;
+        }
+    } catch(e) {}
+    localStorage.removeItem('adminToken');
+    adminToken = null;
+})();
+
+function showRecharge() {
+    $('loginCard').classList.add('hidden');
+    $('rechargeCard').classList.remove('hidden');
+}
+
+function showLogin() {
+    $('rechargeCard').classList.add('hidden');
+    $('loginCard').classList.remove('hidden');
+}
+
+let loginCooldown = false;
+
+async function doLogin() {
+    if (loginCooldown) return;
+
+    const username = $('adminUser').value.trim();
+    const password = $('adminPass').value;
+    const btn = $('loginBtn');
+    const errEl = $('loginError');
+
+    if (!username || !password) {
+        errEl.textContent = '请输入用户名和密码';
+        return;
+    }
+
+    btn.disabled = true;
+    errEl.textContent = '';
+
+    try {
+        const resp = await fetch('/api/admin-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await resp.json();
+
+        // 服务端返回冷却时间（429），按服务端倒计时
+        if (resp.status === 429 || data.cooldown) {
+            startCooldown(data.cooldown || 5);
+            errEl.textContent = data.error || '操作过于频繁';
+            return;
+        }
+
+        if (!resp.ok) {
+            startCooldown(5);
+            errEl.textContent = data.error || '登录失败';
+            return;
+        }
+
+        adminToken = data.token;
+        localStorage.setItem('adminToken', adminToken);
+        showRecharge();
+    } catch(e) {
+        errEl.textContent = '网络错误，请稍后重试';
+        startCooldown(5);
+    }
+}
+
+function startCooldown(seconds) {
+    loginCooldown = true;
+    const btn = $('loginBtn');
+    let countdown = seconds;
+    btn.textContent = `${countdown}s`;
+    const timer = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+            clearInterval(timer);
+            loginCooldown = false;
+            btn.textContent = '登录';
+            btn.disabled = false;
+        } else {
+            btn.textContent = `${countdown}s`;
+        }
+    }, 1000);
+}
+
+// 回车登录
+$('adminPass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+});
+$('adminUser').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('adminPass').focus();
+});
+
+async function doRecharge() {
+    const username = $('targetUser').value.trim();
+    const amount = parseInt($('rechargeAmount').value);
+    const resultEl = $('rechargeResult');
+
+    if (!username) {
+        resultEl.className = 'recharge-result fail';
+        resultEl.textContent = '请输入用户名';
+        return;
+    }
+    if (!amount || amount <= 0) {
+        resultEl.className = 'recharge-result fail';
+        resultEl.textContent = '请输入有效的充值数量';
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/admin-recharge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + adminToken
+            },
+            body: JSON.stringify({ username, amount })
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            resultEl.className = 'recharge-result fail';
+            resultEl.textContent = data.error || '充值失败';
+            return;
+        }
+
+        resultEl.className = 'recharge-result ok';
+        resultEl.textContent = `已为用户 "${data.username}" 充值 ${data.amount} 金币，当前余额: ${data.balance}`;
+        $('targetUser').value = '';
+        $('rechargeAmount').value = '';
+    } catch(e) {
+        resultEl.className = 'recharge-result fail';
+        resultEl.textContent = '网络错误';
+    }
+}
+
+// 充值回车
+$('rechargeAmount').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doRecharge();
+});
+
+function doLogout() {
+    adminToken = null;
+    localStorage.removeItem('adminToken');
+    $('adminUser').value = '';
+    $('adminPass').value = '';
+    $('loginError').textContent = '';
+    $('rechargeResult').textContent = '';
+    $('rechargeResult').className = 'recharge-result';
+    showLogin();
+}
+</script>
+</body>
+</html>
