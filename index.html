@@ -204,6 +204,12 @@
             font-size: 15px; background: rgba(124,58,237,0.15);
         }
 
+        /* Mode Tabs */
+        .mode-tabs { display: flex; gap: 4px; margin-bottom: 16px; background: var(--bg-input); border-radius: 10px; padding: 4px; }
+        .mode-tab { flex: 1; padding: 8px; text-align: center; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-muted); transition: all 0.2s; }
+        .mode-tab.active { background: var(--primary); color: #fff; }
+        .mode-tab:not(.active):hover { color: var(--text); }
+
         /* Form elements */
         .field-label {
             display: block; font-size: 12px; font-weight: 500;
@@ -532,6 +538,11 @@
                 <div class="panel-header">
                     <div class="icon">🎨</div>
                     <span>创作设置</span>
+                </div>
+
+                <div class="mode-tabs">
+                    <div class="mode-tab active">文生图</div>
+                    <div class="mode-tab" onclick="location.href='/ImgEditor.html'">图生图</div>
                 </div>
 
                 <label class="field-label">Prompt 提示词</label>

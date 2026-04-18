@@ -214,6 +214,7 @@ let usersCol = null;       // users 集合
 let queueCol = null;       // img_queue 集合
 let configCol = null;      // config 集合
 let rechargeLogCol = null; // recharge_log 集合
+let refImagesCol = null;  // ref_images 集合（参考图）
 let queueCounter = 0;
 
 // --- 默认系统配置 ---
@@ -288,6 +289,12 @@ async function initMongo() {
     await rechargeLogCol.createIndex({ username: 1 });
     await rechargeLogCol.createIndex({ createdAt: -1 });
     console.log('[init] recharge_log 集合已就绪');
+
+    // ========== 5. 初始化 ref_images 集合（参考图） ==========
+    refImagesCol = db.collection('ref_images');
+    await refImagesCol.createIndex({ username: 1 });
+    await refImagesCol.createIndex({ uploadedAt: -1 });
+    console.log('[init] ref_images 集合已就绪');
 
     // 从 DB 加载配置覆盖内存变量
     await loadConfig();
@@ -528,6 +535,7 @@ async function handleGenerate(req, res) {
     const width = parseInt(body.width) || 512;
     const height = parseInt(body.height) || 512;
     const numImages = Math.min(parseInt(body.num_images) || 1, 4);
+    const initImage = body.initImage || null; // 图生图原图路径
 
     // 计算金币消耗：1024x1024 每张2金币，其他每张1金币
     const costPerImage = (width >= 1024 && height >= 1024) ? 2 : 1;
@@ -599,6 +607,7 @@ async function handleGenerate(req, res) {
             width,
             height,
             numImages,
+            initImage,
             status: 1,
             createdAt: Date.now(),
             result: [],
@@ -624,6 +633,115 @@ async function handleGenerate(req, res) {
     } catch (err) {
         log.error(`生图任务提交失败: ${err.message}`);
         return json(res, 500, { error: '提交生图任务失败' });
+    }
+}
+
+// --- 参考图上传/查询/删除 ---
+
+// POST /api/upload-ref-image — 上传参考图
+async function handleUploadRefImage(req, res) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    const log = getLogger(session.username);
+    const username = session.username;
+    const userDir = getUserDir(username);
+    const refDir = path.join(userDir, 'ref');
+
+    try {
+        const body = await parseBody(req);
+        const imageData = body.image;
+        if (!imageData) return json(res, 400, { error: '请提供图片数据' });
+
+        // 解析 base64（支持 data:image/xxx;base64, 前缀）
+        const matches = imageData.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
+        if (!matches || !matches[2]) return json(res, 400, { error: '图片格式不支持，请使用 PNG/JPG/WEBP' });
+
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const base64Data = matches[2];
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        // 限制 10MB
+        if (buffer.length > 10 * 1024 * 1024) {
+            return json(res, 400, { error: '图片大小不能超过 10MB' });
+        }
+
+        // 确保 ref 目录存在
+        if (!fs.existsSync(refDir)) fs.mkdirSync(refDir, { recursive: true });
+
+        const filename = `ref_${Date.now()}.${ext}`;
+        const filepath = path.join(refDir, filename);
+        fs.writeFileSync(filepath, buffer);
+
+        const url = `/users/${username}/ref/${filename}`;
+
+        // 写入数据库
+        await refImagesCol.insertOne({
+            username,
+            filename,
+            url,
+            uploadedAt: Date.now(),
+        });
+
+        log.info(`参考图上传: ${filename} (${(buffer.length / 1024).toFixed(1)}KB)`);
+        json(res, 200, { success: true, url, filename });
+    } catch (err) {
+        log.error(`参考图上传失败: ${err.message}`);
+        json(res, 500, { error: '上传失败' });
+    }
+}
+
+// GET /api/ref-images — 获取当前用户的参考图列表
+async function handleGetRefImages(req, res) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    try {
+        const images = await refImagesCol.find(
+            { username: session.username },
+            { projection: { _id: 0, url: 1, filename: 1, uploadedAt: 1 } }
+        ).sort({ uploadedAt: -1 }).toArray();
+        json(res, 200, { images });
+    } catch (err) {
+        json(res, 500, { error: '查询失败' });
+    }
+}
+
+// POST /api/delete-ref-image — 删除参考图
+async function handleDeleteRefImage(req, res) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    const log = getLogger(session.username);
+    try {
+        const body = await parseBody(req);
+        const filename = body.filename;
+        if (!filename) return json(res, 400, { error: '请提供文件名' });
+
+        // 安全检查：文件名不能包含路径分隔符
+        if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+            return json(res, 400, { error: '非法文件名' });
+        }
+
+        // 从数据库删除
+        const delResult = await refImagesCol.deleteOne({
+            username: session.username,
+            filename,
+        });
+        if (delResult.deletedCount === 0) return json(res, 404, { error: '图片不存在' });
+
+        // 从文件系统删除
+        const filepath = path.join(getUserDir(session.username), 'ref', filename);
+        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+
+        log.info(`参考图删除: ${filename}`);
+        json(res, 200, { success: true });
+    } catch (err) {
+        log.error(`参考图删除失败: ${err.message}`);
+        json(res, 500, { error: '删除失败' });
     }
 }
 
@@ -1031,6 +1149,9 @@ const server = http.createServer(async (req, res) => {
         if (url.startsWith('/api/result/') && method === 'GET') return await handleGetResult(req, res, url.split('/').pop());
         if (url === '/api/delete-image' && method === 'POST') return await handleDeleteImage(req, res);
         if (url === '/api/delete-all-images' && method === 'POST') return await handleDeleteAllImages(req, res);
+        if (url === '/api/upload-ref-image' && method === 'POST') return await handleUploadRefImage(req, res);
+        if (url === '/api/ref-images' && method === 'GET') return await handleGetRefImages(req, res);
+        if (url === '/api/delete-ref-image' && method === 'POST') return await handleDeleteRefImage(req, res);
 
         // Video management routes
         if (url === '/api/videos' && method === 'GET') return handleGetVideos(req, res);
