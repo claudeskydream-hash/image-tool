@@ -272,34 +272,6 @@
             body { display: flex; flex-direction: column; }
         }
 
-        /* Login overlay */
-        .login-overlay {
-            position: absolute; inset: 0; z-index: 100;
-            background: var(--bg); display: flex; align-items: center; justify-content: center;
-        }
-        .login-overlay.hidden { display: none; }
-        .login-card {
-            width: 360px; max-width: 90vw; padding: 32px;
-            background: var(--bg-card); border: 1px solid var(--border);
-            border-radius: 16px; text-align: center;
-        }
-        .login-title { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
-        .login-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
-        .login-input {
-            width: 100%; padding: 12px 14px; border-radius: 10px;
-            background: var(--bg-input); border: 1px solid var(--border);
-            color: var(--text); font-size: 14px; font-family: inherit;
-            outline: none; margin-bottom: 12px; box-sizing: border-box;
-        }
-        .login-input:focus { border-color: var(--primary); }
-        .login-error { color: var(--error); font-size: 12px; margin-bottom: 10px; text-align: left; }
-        .login-submit-btn {
-            width: 100%; padding: 12px; border-radius: 10px;
-            background: var(--primary); color: #fff; font-size: 14px; font-weight: 600;
-            border: none; cursor: pointer; font-family: inherit;
-        }
-        .login-submit-btn:hover { background: var(--primary-dark); }
-        .login-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -327,17 +299,6 @@
 
 <!-- Main -->
 <div class="main">
-    <!-- Login overlay -->
-    <div class="login-overlay" id="loginOverlay">
-        <div class="login-card">
-            <div class="login-title">AI Image Studio</div>
-            <div class="login-sub">输入用户名开始创作</div>
-            <input class="login-input" id="loginUsername" placeholder="请输入用户名" maxlength="30" autocomplete="off">
-            <div class="login-error" id="loginError" style="display:none;"></div>
-            <button class="login-submit-btn" id="loginBtn" onclick="handleLogin()">进入工作室</button>
-        </div>
-    </div>
-
     <div class="chat-header">
         <div class="chat-title" id="chatTitle">AI 图生图工作室</div>
         <div class="header-info">
@@ -419,45 +380,11 @@ function fetchWithTimeout(url, opt, ms) {
     if (authToken && currentUser) {
         try {
             const sr = await fetch('/api/check-session', { headers: { 'Authorization': 'Bearer ' + authToken } });
-            if (sr.ok) { $('loginOverlay').classList.add('hidden'); fetchMoney(); enterChat(); return; }
+            if (sr.ok) { fetchMoney(); enterChat(); return; }
         } catch(e) {}
     }
-    // 未登录，显示登录界面
-    $('loginOverlay').classList.remove('hidden');
-    $('loginUsername').addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
+    location.href = '/';
 })();
-
-async function handleLogin() {
-    const input = $('loginUsername').value.trim();
-    const errEl = $('loginError');
-    const btn = $('loginBtn');
-    if (!input) { errEl.textContent = '用户名不能为空'; errEl.style.display = ''; return; }
-    btn.disabled = true; btn.textContent = '登录中...'; errEl.style.display = 'none';
-    try {
-        const resp = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: input })
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-            errEl.textContent = data.error || '登录失败'; errEl.style.display = '';
-            if (data.boundUser) { $('loginUsername').value = data.boundUser; }
-            return;
-        }
-        authToken = data.token;
-        currentUser = data.username;
-        localStorage.setItem('authToken', authToken);
-        localStorage.setItem('currentUser', currentUser);
-        $('loginOverlay').classList.add('hidden');
-        fetchMoney();
-        enterChat();
-    } catch(e) {
-        errEl.textContent = '网络错误，请重试'; errEl.style.display = '';
-    } finally {
-        btn.disabled = false; btn.textContent = '进入工作室';
-    }
-}
 
 async function enterChat() {
     // 并行加载会话列表 + 金币 + 全局队列
