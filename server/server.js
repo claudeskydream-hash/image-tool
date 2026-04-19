@@ -215,6 +215,7 @@ let queueCol = null;       // img_queue 集合
 let configCol = null;      // config 集合
 let rechargeLogCol = null; // recharge_log 集合
 let refImagesCol = null;  // ref_images 集合（参考图）
+let chatSessionsCol = null; // chat_sessions 集合（图生图会话）
 let queueCounter = 0;
 
 // --- 默认系统配置 ---
@@ -295,6 +296,13 @@ async function initMongo() {
     await refImagesCol.createIndex({ username: 1 });
     await refImagesCol.createIndex({ uploadedAt: -1 });
     console.log('[init] ref_images 集合已就绪');
+
+    // ========== 6. 初始化 chat_sessions 集合（图生图会话） ==========
+    chatSessionsCol = db.collection('chat_sessions');
+    await chatSessionsCol.createIndex({ username: 1 });
+    await chatSessionsCol.createIndex({ sessionId: 1 }, { unique: true });
+    await chatSessionsCol.createIndex({ updatedAt: -1 });
+    console.log('[init] chat_sessions 集合已就绪');
 
     // 从 DB 加载配置覆盖内存变量
     await loadConfig();
@@ -535,7 +543,10 @@ async function handleGenerate(req, res) {
     const width = parseInt(body.width) || 512;
     const height = parseInt(body.height) || 512;
     const numImages = Math.min(parseInt(body.num_images) || 1, 4);
-    const initImage = body.initImage || null; // 图生图原图路径
+    const initImage = body.initImage || null; // 图生图原图完整 URL
+    const mode = body.mode || 'text2img';     // text2img | img2img
+    const model = body.model || 'z-image';    // z-image | flux2klein
+    const sessionId = body.sessionId || null;  // 关联的聊天会话 ID
 
     // 计算金币消耗：1024x1024 每张2金币，其他每张1金币
     const costPerImage = (width >= 1024 && height >= 1024) ? 2 : 1;
@@ -608,6 +619,9 @@ async function handleGenerate(req, res) {
             height,
             numImages,
             initImage,
+            mode,
+            model,
+            sessionId,
             status: 1,
             createdAt: Date.now(),
             result: [],
@@ -617,7 +631,7 @@ async function handleGenerate(req, res) {
 
         const insertResult = await queueCol.insertOne(doc);
 
-        log.info(`生图任务已提交 queueId=${doc.queueId} dbId=${insertResult.insertedId} prompt="${prompt.slice(0, 50)}" size=${width}x${height} num=${numImages} cost=${totalCost}`);
+        log.info(`生图任务已提交 queueId=${doc.queueId} mode=${mode} model=${model} prompt="${prompt.slice(0, 50)}" size=${width}x${height} num=${numImages} cost=${totalCost}`);
 
         // 获取最新金币余额
         const updatedUser = await usersCol.findOne({ username: session.username }, { projection: { money: 1 } });
@@ -745,6 +759,163 @@ async function handleDeleteRefImage(req, res) {
     }
 }
 
+// --- 图生图会话 CRUD ---
+
+// GET /api/chat-sessions — 获取用户会话列表
+async function handleGetChatSessions(req, res) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    try {
+        // 用聚合管道只取必要字段，避免 $size 逐文档计算
+        const list = await chatSessionsCol.aggregate([
+            { $match: { username: session.username } },
+            { $sort: { updatedAt: -1 } },
+            { $limit: 50 },
+            { $project: { _id: 0, sessionId: 1, name: 1, createdAt: 1, updatedAt: 1, messageCount: { $size: '$messages' } } }
+        ]).toArray();
+        json(res, 200, { sessions: list });
+    } catch (err) {
+        json(res, 500, { error: '查询失败' });
+    }
+}
+
+// GET /api/chat-session/:id — 获取单个会话详情（含消息）
+async function handleGetChatSession(req, res, sessionId) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    try {
+        const doc = await chatSessionsCol.findOne(
+            { sessionId, username: session.username },
+            { projection: { _id: 0 } }
+        );
+        if (!doc) return json(res, 404, { error: '会话不存在' });
+        json(res, 200, doc);
+    } catch (err) {
+        json(res, 500, { error: '查询失败' });
+    }
+}
+
+// POST /api/chat-session — 创建新会话
+async function handleCreateChatSession(req, res) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    try {
+        const body = await parseBody(req);
+        const sessionId = 'sess_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+        const now = Date.now();
+        const doc = {
+            sessionId,
+            username: session.username,
+            name: body.name || new Date(now).toLocaleString('zh-CN'),
+            messages: [],
+            currentInitImage: null,
+            createdAt: now,
+            updatedAt: now,
+        };
+        await chatSessionsCol.insertOne(doc);
+        json(res, 200, { success: true, sessionId, name: doc.name });
+    } catch (err) {
+        json(res, 500, { error: '创建失败' });
+    }
+}
+
+// PUT /api/chat-session/:id — 更新会话（追加消息、改名、更新参考图）
+async function handleUpdateChatSession(req, res, sessionId) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    try {
+        const body = await parseBody(req);
+        const update = { updatedAt: Date.now() };
+
+        if (body.name) update.name = body.name;
+        if (body.currentInitImage !== undefined) update.currentInitImage = body.currentInitImage;
+        if (body.messages) update.messages = body.messages;
+        if (body.appendMessage) {
+            // 追加单条消息
+            await chatSessionsCol.updateOne(
+                { sessionId, username: session.username },
+                { $push: { messages: body.appendMessage }, $set: { updatedAt: Date.now() } }
+            );
+            // 如果是第一条用户消息，更新会话名
+            const doc = await chatSessionsCol.findOne({ sessionId }, { projection: { messages: { $slice: 2 } } });
+            if (doc && doc.messages.length <= 2 && body.appendMessage.role === 'user' && body.appendMessage.text) {
+                const name = body.appendMessage.text.slice(0, 12);
+                await chatSessionsCol.updateOne({ sessionId }, { $set: { name } });
+            }
+            json(res, 200, { success: true });
+            return;
+        }
+
+        await chatSessionsCol.updateOne(
+            { sessionId, username: session.username },
+            { $set: update }
+        );
+        json(res, 200, { success: true });
+    } catch (err) {
+        json(res, 500, { error: '更新失败' });
+    }
+}
+
+// DELETE /api/chat-session/:id — 删除会话
+async function handleDeleteChatSession(req, res, sessionId) {
+    const token = req.headers['authorization']?.replace('Bearer ', '');
+    const session = sessions.get(token);
+    if (!session) return json(res, 401, { error: '未登录' });
+
+    try {
+        // 先查出会话文档，提取所有图片路径
+        const doc = await chatSessionsCol.findOne({ sessionId, username: session.username });
+        if (doc && doc.messages) {
+            const relativePaths = new Set(); // 统一转为相对路径 /users/...
+            for (const msg of doc.messages) {
+                if (msg.imageUrl) relativePaths.add(toRelativePath(msg.imageUrl));
+                if (msg.images && Array.isArray(msg.images)) msg.images.forEach(u => relativePaths.add(toRelativePath(u)));
+            }
+            if (doc.initImage) relativePaths.add(toRelativePath(doc.initImage));
+
+            // 删除文件 + ref_images 记录
+            for (const relPath of relativePaths) {
+                try {
+                    const filePath = path.join(USERS_DIR, relPath.replace(/^\/users\//, ''));
+                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                } catch (_) {}
+                try {
+                    await refImagesCol.deleteOne({ url: relPath, username: session.username });
+                } catch (_) {}
+            }
+        }
+        // 删除 queue 中该会话相关的未完成任务
+        try {
+            await queueCol.deleteMany({ sessionId, username: session.username, status: { $in: [1, 2] } });
+        } catch (_) {}
+        // 删除会话文档
+        await chatSessionsCol.deleteOne({ sessionId, username: session.username });
+        json(res, 200, { success: true });
+    } catch (err) {
+        json(res, 500, { error: '删除失败' });
+    }
+}
+
+// 将完整 URL 或相对路径统一转为 /users/... 相对路径
+function toRelativePath(url) {
+    if (!url) return '';
+    // http://192.168.x.x/users/xxx/...  →  /users/xxx/...
+    try {
+        const parsed = new URL(url, 'http://dummy');
+        return parsed.pathname;
+    } catch (_) {
+        return url.startsWith('/') ? url : '/' + url;
+    }
+}
+
 // --- GET /api/getImgQueue ---
 // External worker calls this to fetch pending tasks (status=1) and mark them as status=2
 // Uses findOneAndUpdate (atomic) to prevent duplicate pickup by multiple workers
@@ -779,6 +950,9 @@ async function handleGetImgQueue(req, res) {
             width: t.width,
             height: t.height,
             numImages: t.numImages,
+            initImage: t.initImage || null,
+            mode: t.mode || 'text2img',
+            model: t.model || 'z-image',
             status: 2,
             createdAt: t.createdAt,
         }));
@@ -945,9 +1119,21 @@ async function handleDeleteAllImages(req, res) {
                 try { fs.unlinkSync(path.join(userDir, f)); deleted++; } catch(e) {}
             }
         }
+        // 清理 ref 子目录
+        const refDir = path.join(userDir, 'ref');
+        if (fs.existsSync(refDir)) {
+            const refFiles = fs.readdirSync(refDir).filter(f =>
+                f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.webp')
+            );
+            for (const f of refFiles) {
+                try { fs.unlinkSync(path.join(refDir, f)); deleted++; } catch(e) {}
+            }
+        }
 
         // 清除该用户所有已完成的队列记录，重置图片数量限制
         const queueResult = await queueCol.deleteMany({ username: session.username, status: 3 });
+        // 清除 ref_images 记录
+        try { await refImagesCol.deleteMany({ username: session.username }); } catch(e) {}
         log.info(`一键删除: 清除 ${deleted} 张图片文件，清除 ${queueResult.deletedCount} 条已完成队列记录`);
 
         json(res, 200, { success: true, deleted });
@@ -1152,6 +1338,13 @@ const server = http.createServer(async (req, res) => {
         if (url === '/api/upload-ref-image' && method === 'POST') return await handleUploadRefImage(req, res);
         if (url === '/api/ref-images' && method === 'GET') return await handleGetRefImages(req, res);
         if (url === '/api/delete-ref-image' && method === 'POST') return await handleDeleteRefImage(req, res);
+
+        // Chat session routes
+        if (url === '/api/chat-sessions' && method === 'GET') return await handleGetChatSessions(req, res);
+        if (url === '/api/chat-session' && method === 'POST') return await handleCreateChatSession(req, res);
+        if (url.startsWith('/api/chat-session/') && method === 'GET') return await handleGetChatSession(req, res, url.split('/').pop());
+        if (url.startsWith('/api/chat-session/') && method === 'PUT') return await handleUpdateChatSession(req, res, url.split('/').pop());
+        if (url.startsWith('/api/chat-session/') && method === 'DELETE') return await handleDeleteChatSession(req, res, url.split('/').pop());
 
         // Video management routes
         if (url === '/api/videos' && method === 'GET') return handleGetVideos(req, res);

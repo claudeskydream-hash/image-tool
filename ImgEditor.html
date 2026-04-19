@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Image Studio - 图生图</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #7c3aed; --primary-light: #a78bfa; --primary-dark: #5b21b6;
+            --accent: #06b6d4; --bg: #0f0f1a; --bg-card: #1a1a2e; --bg-input: #16162a;
+            --border: #2a2a4a; --text: #e2e8f0; --text-muted: #94a3b8;
+            --success: #10b981; --error: #ef4444; --warning: #f59e0b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg); color: var(--text);
+            height: 100vh; overflow: hidden; display: flex;
+        }
+
+        /* ===== SIDEBAR ===== */
+        .sidebar {
+            width: 240px; background: var(--bg-card); border-right: 1px solid var(--border);
+            display: flex; flex-direction: column; flex-shrink: 0;
+        }
+        .sidebar-header {
+            padding: 14px 16px; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .sidebar-header .back-link {
+            display: flex; align-items: center; gap: 4px;
+            color: var(--text-muted); text-decoration: none; font-size: 12px;
+            transition: color 0.2s;
+        }
+        .sidebar-header .back-link:hover { color: var(--text); }
+        .sidebar-header .back-link svg { width: 14px; height: 14px; }
+        .sidebar-header .sep { color: var(--border); font-size: 12px; }
+        .sidebar-title { font-size: 13px; font-weight: 600; flex: 1; }
+
+        .session-list {
+            flex: 1; overflow-y: auto; padding: 8px;
+            display: flex; flex-direction: column; gap: 2px;
+        }
+        .session-list::-webkit-scrollbar { width: 3px; }
+        .session-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .session-item {
+            padding: 10px 12px; border-radius: 8px; cursor: pointer;
+            font-size: 13px; color: var(--text-muted); transition: all 0.15s;
+            display: flex; align-items: center; gap: 8px; position: relative;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .session-item:hover { background: rgba(124,58,237,0.1); color: var(--text); }
+        .session-item.active { background: rgba(124,58,237,0.2); color: var(--primary-light); }
+        .session-item .s-icon { font-size: 14px; flex-shrink: 0; }
+        .session-item .s-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        .session-item .s-del {
+            opacity: 0; width: 20px; height: 20px; border-radius: 4px;
+            background: rgba(239,68,68,0.2); color: #fca5a5; font-size: 10px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: opacity 0.15s; flex-shrink: 0; border: none;
+        }
+        .session-item:hover .s-del { opacity: 1; }
+
+        .new-session-btn {
+            margin: 8px; padding: 10px; border-radius: 8px;
+            background: rgba(124,58,237,0.1); border: 1px dashed rgba(124,58,237,0.3);
+            color: var(--primary-light); font-size: 13px; cursor: pointer;
+            font-family: inherit; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+        }
+        .new-session-btn:hover { background: rgba(124,58,237,0.2); border-color: var(--primary); }
+
+        /* ===== MAIN ===== */
+        .main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+        /* Header */
+        .chat-header {
+            background: rgba(26,26,46,0.95); backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border); padding: 0 16px; height: 52px;
+            display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+        }
+        .chat-title {
+            flex: 1; font-size: 15px; font-weight: 600;
+            background: linear-gradient(135deg, #fff, var(--primary-light));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .header-info { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+        .size-select {
+            padding: 4px 8px; border-radius: 6px; background: var(--bg-input);
+            border: 1px solid var(--border); color: var(--text); font-size: 12px;
+            font-family: inherit; outline: none; cursor: pointer;
+        }
+
+        /* Chat body */
+        .chat-body {
+            flex: 1; overflow-y: auto; padding: 16px;
+            display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth;
+        }
+        .chat-body::-webkit-scrollbar { width: 4px; }
+        .chat-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        /* Messages */
+        .msg { display: flex; gap: 10px; max-width: 80%; animation: msgIn 0.25s ease-out; align-self: flex-end; flex-direction: row-reverse; }
+        .msg.user { }
+        .msg.ai { }
+        .msg.system { align-self: center; max-width: 90%; flex-direction: row; }
+        @keyframes msgIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+        .msg-avatar {
+            width: 34px; height: 34px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 15px; flex-shrink: 0;
+        }
+        .msg.ai .msg-avatar { background: linear-gradient(135deg, var(--primary), var(--accent)); }
+        .msg.user .msg-avatar { background: linear-gradient(135deg, #3b82f6, #8b5cf6); }
+
+        .msg-bubble {
+            border-radius: 14px; padding: 10px 14px; font-size: 14px;
+            line-height: 1.6; word-break: break-word;
+        }
+        .msg.ai .msg-bubble { background: #1e1e36; border: 1px solid var(--border); border-top-left-radius: 4px; }
+        .msg.user .msg-bubble { background: linear-gradient(135deg, var(--primary-dark), var(--primary)); border-top-right-radius: 4px; color: #fff; }
+        .msg.system .msg-bubble {
+            background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.15);
+            border-radius: 10px; font-size: 12px; color: var(--text-muted); text-align: center; padding: 8px 14px;
+        }
+
+        .msg-bubble img.chat-thumb {
+            width: 180px; height: auto; border-radius: 8px; display: block;
+            margin: 6px 0; cursor: pointer; border: 1px solid var(--border);
+        }
+        .msg-bubble img.chat-thumb:hover { opacity: 0.85; border-color: var(--primary-light); }
+        .msg-actions { display: flex; gap: 6px; margin-top: 8px; }
+        .msg-action-btn {
+            padding: 4px 10px; border-radius: 6px; background: rgba(255,255,255,0.1);
+            border: none; color: var(--text-muted); font-size: 11px; cursor: pointer;
+            font-family: inherit; display: flex; align-items: center; gap: 4px; transition: all 0.15s;
+        }
+        .msg-action-btn:hover { background: rgba(255,255,255,0.2); color: var(--text); }
+        .msg-time { font-size: 10px; color: var(--text-muted); margin-top: 4px; opacity: 0.5; }
+
+        /* Chat loading overlay */
+        .chat-loading {
+            position: absolute; inset: 0; z-index: 20;
+            background: rgba(15,15,26,0.7); backdrop-filter: blur(4px);
+            display: flex; align-items: center; justify-content: center; gap: 12px;
+        }
+        .chat-loading .cl-spinner {
+            width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--primary-light);
+            border-radius: 50%; animation: spinIcon 0.7s linear infinite;
+        }
+        .chat-loading .cl-text { font-size: 13px; color: var(--text-muted); }
+        .session-list.disabled .session-item { pointer-events: none; opacity: 0.4; }
+
+        /* Loading */
+        .msg.ai .msg-bubble.loading-bubble {
+            display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px;
+        }
+        .loading-dots { display: flex; gap: 6px; }
+        .loading-dots span {
+            width: 8px; height: 8px; border-radius: 50%; background: var(--primary-light);
+            animation: dotPulse 1.4s ease-in-out infinite;
+        }
+        .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes dotPulse { 0%,80%,100%{opacity:.3;transform:scale(.8)} 40%{opacity:1;transform:scale(1)} }
+        .loading-text { font-size: 12px; color: var(--text-muted); }
+
+        /* Input bar — floating centered */
+        .chat-input-bar {
+            position: absolute; bottom: 0; left: 0; right: 0; z-index: 30;
+            display: flex; justify-content: center; padding: 12px 20px 16px;
+            background: linear-gradient(to bottom, transparent, var(--bg) 40%);
+            pointer-events: none;
+        }
+        .input-box {
+            width: 100%; max-width: 680px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 16px; padding: 6px;
+            display: flex; align-items: flex-end; gap: 4px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            pointer-events: auto; transition: border-color 0.2s;
+        }
+        .input-box:focus-within { border-color: var(--primary); }
+
+        .plus-btn {
+            width: 34px; height: 34px; border-radius: 50%;
+            background: transparent; border: none;
+            color: var(--text-muted); font-size: 20px; font-weight: 300;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; position: relative; transition: all 0.2s;
+        }
+        .plus-btn:hover { color: var(--primary-light); }
+        .popup-menu {
+            position: absolute; bottom: 46px; left: 0; background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: 10px; padding: 4px;
+            min-width: 170px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); display: none; z-index: 50;
+        }
+        .popup-menu.show { display: block; animation: popIn 0.12s ease-out; }
+        @keyframes popIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+        .popup-item {
+            display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+            border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text); transition: background 0.12s;
+        }
+        .popup-item:hover { background: rgba(124,58,237,0.15); }
+        .popup-item svg { width: 15px; height: 15px; color: var(--text-muted); flex-shrink: 0; }
+
+        .chat-input {
+            flex: 1; background: transparent; border: none; outline: none;
+            color: var(--text); font-size: 14px; font-family: inherit;
+            padding: 10px 8px; resize: none; min-height: 48px; max-height: 160px; line-height: 1.5;
+        }
+        .chat-input::placeholder { color: #4a5568; }
+
+        .send-btn {
+            width: 34px; height: 34px; border-radius: 10px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            border: none; color: #fff; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; transition: all 0.2s;
+        }
+        .send-btn:hover { transform: scale(1.05); }
+        .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+        .send-btn svg { width: 16px; height: 16px; }
+        .send-btn.loading svg { animation: spinIcon 0.8s linear infinite; }
+        @keyframes spinIcon { to { transform: rotate(360deg); } }
+
+        /* Toast */
+        .toast {
+            position: fixed; top: 70px; right: 16px; padding: 10px 16px; border-radius: 8px;
+            font-size: 13px; font-weight: 500; z-index: 200;
+            transform: translateX(120%); transition: transform 0.3s ease; max-width: 320px;
+        }
+        .toast.show { transform: translateX(0); }
+        .toast.error { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; }
+        .toast.success { background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3); color: #6ee7b7; }
+        .toast.warning { background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.3); color: #fcd34d; }
+
+        /* Image modal */
+        .img-modal {
+            position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,0.92);
+            display: none; align-items: center; justify-content: center;
+            overflow: hidden;
+        }
+        .img-modal.show { display: flex; }
+        .img-modal .modal-bg { position: absolute; inset: 0; z-index: 0; cursor: pointer; }
+        .img-modal .modal-img-wrap {
+            position: relative; z-index: 1; touch-action: none;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .img-modal img {
+            max-width: 95vw; max-height: 90vh; object-fit: contain; border-radius: 4px;
+            user-select: none; -webkit-user-drag: none; pointer-events: auto;
+        }
+        .img-modal .modal-close {
+            position: absolute; top: 12px; right: 16px; z-index: 10;
+            width: 36px; height: 36px; border-radius: 50%;
+            background: rgba(255,255,255,0.15); border: none;
+            color: #fff; font-size: 18px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .img-modal .modal-close:hover { background: rgba(255,255,255,0.3); }
+        .img-modal .zoom-hint {
+            position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+            font-size: 12px; color: var(--text-muted); pointer-events: none; z-index: 10;
+        }
+
+        @media (max-width: 700px) {
+            .sidebar { display: none; }
+            body { display: flex; flex-direction: column; }
+        }
+
+        /* Login overlay */
+        .login-overlay {
+            position: absolute; inset: 0; z-index: 100;
+            background: var(--bg); display: flex; align-items: center; justify-content: center;
+        }
+        .login-overlay.hidden { display: none; }
+        .login-card {
+            width: 360px; max-width: 90vw; padding: 32px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 16px; text-align: center;
+        }
+        .login-title { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+        .login-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+        .login-input {
+            width: 100%; padding: 12px 14px; border-radius: 10px;
+            background: var(--bg-input); border: 1px solid var(--border);
+            color: var(--text); font-size: 14px; font-family: inherit;
+            outline: none; margin-bottom: 12px; box-sizing: border-box;
+        }
+        .login-input:focus { border-color: var(--primary); }
+        .login-error { color: var(--error); font-size: 12px; margin-bottom: 10px; text-align: left; }
+        .login-submit-btn {
+            width: 100%; padding: 12px; border-radius: 10px;
+            background: var(--primary); color: #fff; font-size: 14px; font-weight: 600;
+            border: none; cursor: pointer; font-family: inherit;
+        }
+        .login-submit-btn:hover { background: var(--primary-dark); }
+        .login-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="sidebar-header">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:32px;height:32px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff;flex-shrink:0;" id="userAvatar">?</div>
+            <div style="min-width:0;">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="sidebarUsername">未登录</div>
+                <div style="font-size:11px;color:var(--warning);display:flex;align-items:center;gap:3px;margin-top:2px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--warning)" stroke="none"><circle cx="12" cy="12" r="10"/><text x="12" y="17" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a2e">¥</text></svg>
+                    <span id="sidebarMoney">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="session-list" id="sessionList"></div>
+    <button class="new-session-btn" onclick="createNewSession()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        新建会话
+    </button>
+</div>
+
+<!-- Main -->
+<div class="main">
+    <!-- Login overlay -->
+    <div class="login-overlay" id="loginOverlay">
+        <div class="login-card">
+            <div class="login-title">AI Image Studio</div>
+            <div class="login-sub">输入用户名开始创作</div>
+            <input class="login-input" id="loginUsername" placeholder="请输入用户名" maxlength="30" autocomplete="off">
+            <div class="login-error" id="loginError" style="display:none;"></div>
+            <button class="login-submit-btn" id="loginBtn" onclick="handleLogin()">进入工作室</button>
+        </div>
+    </div>
+
+    <div class="chat-header">
+        <div class="chat-title" id="chatTitle">AI 图生图工作室</div>
+        <div class="header-info">
+            <span>队列 <span id="globalQueueCount">0</span>/50</span>
+            <select class="size-select" id="modelSelect">
+                <option value="z-image">z-image</option>
+                <option value="flux2klein">flux2klein</option>
+            </select>
+            <select class="size-select" id="sizeSelect">
+                <option value="512x512">512x512</option>
+                <option value="1024x1024">1024x1024</option>
+                <option value="1024x768">1024x768</option>
+                <option value="768x1024">768x1024</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="chat-body" id="chatBody"></div>
+
+    <div class="chat-input-bar">
+        <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="handleFileSelect(event)">
+        <div class="input-box">
+            <button class="plus-btn" id="plusBtn" onclick="togglePopupMenu()">+
+                <div class="popup-menu" id="popupMenu">
+                    <div class="popup-item" onclick="event.stopPropagation();popupAction_newSession()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        新建会话
+                    </div>
+                    <div class="popup-item" onclick="event.stopPropagation();popupAction_upload()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        上传编辑图片
+                    </div>
+                    <div class="popup-item" onclick="event.stopPropagation();popupAction_clearImages()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        清理全部图片
+                    </div>
+                </div>
+            </button>
+            <textarea class="chat-input" id="chatInput" placeholder="输入提示词生成或编辑图片..." rows="1" oninput="autoResize(this)"></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="img-modal" id="imgModal">
+    <div class="modal-bg" onclick="closeImageModal()"></div>
+    <button class="modal-close" onclick="closeImageModal()">✕</button>
+    <div class="modal-img-wrap" id="modalImgWrap">
+        <img id="imgModalSrc" src="" alt="">
+    </div>
+    <div class="zoom-hint" id="zoomHint">100%</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ===== State =====
+let authToken = localStorage.getItem('authToken') || '';
+let currentUser = localStorage.getItem('currentUser') || '';
+let isGenerating = false;
+let currentSessionId = null;   // 当前活跃会话 ID
+let currentInitImage = null;   // 当前参考图完整 URL
+let sessionMessages = [];      // 当前会话消息数组
+let pendingLoadingId = null;
+
+function fetchWithTimeout(url, opt, ms) {
+    const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
+    return fetch(url, { ...opt, signal: c.signal }).finally(() => clearTimeout(t));
+}
+
+// ===== Init =====
+(async function init() {
+    try { const r = await fetchWithTimeout('/api/check-ip', {}, 5000); if (!r.ok) throw 0; } catch(e) {
+        addSystemMsg('服务器未启动'); return;
+    }
+    if (authToken && currentUser) {
+        try {
+            const sr = await fetch('/api/check-session', { headers: { 'Authorization': 'Bearer ' + authToken } });
+            if (sr.ok) { $('loginOverlay').classList.add('hidden'); fetchMoney(); enterChat(); return; }
+        } catch(e) {}
+    }
+    // 未登录，显示登录界面
+    $('loginOverlay').classList.remove('hidden');
+    $('loginUsername').addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
+})();
+
+async function handleLogin() {
+    const input = $('loginUsername').value.trim();
+    const errEl = $('loginError');
+    const btn = $('loginBtn');
+    if (!input) { errEl.textContent = '用户名不能为空'; errEl.style.display = ''; return; }
+    btn.disabled = true; btn.textContent = '登录中...'; errEl.style.display = 'none';
+    try {
+        const resp = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: input })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            errEl.textContent = data.error || '登录失败'; errEl.style.display = '';
+            if (data.boundUser) { $('loginUsername').value = data.boundUser; }
+            return;
+        }
+        authToken = data.token;
+        currentUser = data.username;
+        localStorage.setItem('authToken', authToken);
+        localStorage.setItem('currentUser', currentUser);
+        $('loginOverlay').classList.add('hidden');
+        fetchMoney();
+        enterChat();
+    } catch(e) {
+        errEl.textContent = '网络错误，请重试'; errEl.style.display = '';
+    } finally {
+        btn.disabled = false; btn.textContent = '进入工作室';
+    }
+}
+
+async function enterChat() {
+    // 并行加载会话列表 + 金币 + 全局队列
+    await loadSessionList();
+
+    // 如果有会话，打开最新的；否则创建新会话
+    const listEl = $('sessionList');
+    const firstItem = listEl.querySelector('.session-item');
+    if (firstItem) {
+        openSession(firstItem.dataset.id); // 不 await，后台加载
+    } else {
+        createNewSession();
+    }
+
+    fetchMoney();
+    fetchGlobalQueue();
+    setInterval(fetchGlobalQueue, 5000);
+    connectSSE();
+
+    $('chatInput').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    document.addEventListener('click', e => {
+        if (!$('plusBtn').contains(e.target)) $('popupMenu').classList.remove('show');
+    });
+}
+
+async function fetchMoney() {
+    try {
+        const r = await fetch('/api/user-info', { headers: { 'Authorization': 'Bearer ' + authToken } });
+        if (r.ok) {
+            const d = await r.json();
+            $('sidebarMoney').textContent = d.money || 0;
+            $('sidebarUsername').textContent = currentUser || d.username || '未登录';
+            $('userAvatar').textContent = (currentUser || d.username || '?').charAt(0).toUpperCase();
+        }
+    } catch(e) {}
+}
+
+// ===== Session List =====
+async function loadSessionList() {
+    try {
+        const resp = await fetch('/api/chat-sessions', { headers: { 'Authorization': 'Bearer ' + authToken } });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderSessionList(data.sessions || []);
+    } catch(e) {}
+}
+
+function renderSessionList(sessions) {
+    $('sessionList').innerHTML = sessions.map(s => `
+        <div class="session-item ${s.sessionId === currentSessionId ? 'active' : ''}" data-id="${s.sessionId}" onclick="openSession('${s.sessionId}')">
+            <span class="s-icon">${s.messageCount > 0 ? '💬' : '📝'}</span>
+            <span class="s-name">${escapeHtml(s.name)}</span>
+            <button class="s-del" onclick="event.stopPropagation();deleteSession('${s.sessionId}')">✕</button>
+        </div>
+    `).join('');
+}
+
+async function createNewSession() {
+    try {
+        const resp = await fetch('/api/chat-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+            body: JSON.stringify({})
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.error || '创建失败', 'error'); return; }
+        await loadSessionList();
+        await openSession(data.sessionId);
+    } catch(e) { showToast('创建失败', 'error'); }
+}
+
+async function openSession(sessionId) {
+    // 显示加载遮罩
+    $('chatBody').innerHTML = '';
+    const overlay = document.createElement('div');
+    overlay.className = 'chat-loading';
+    overlay.innerHTML = '<div class="cl-spinner"></div><div class="cl-text">加载会话中...</div>';
+    $('chatBody').parentElement.querySelector('.chat-body').style.position = 'relative';
+    $('chatBody').appendChild(overlay);
+
+    // 禁用会话列表
+    $('sessionList').classList.add('disabled');
+
+    try {
+        const resp = await fetch('/api/chat-session/' + sessionId, {
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        currentSessionId = data.sessionId;
+        sessionMessages = data.messages || [];
+        currentInitImage = data.currentInitImage || null;
+
+        $('chatTitle').textContent = data.name || 'AI 图生图工作室';
+
+        // 渲染聊天
+        $('chatBody').innerHTML = '';
+        if (sessionMessages.length === 0) {
+            addSystemMsg('新会话已创建，直接输入提示词即可生成图片。你也可以上传图片进行图生图编辑。');
+        } else {
+            sessionMessages.forEach(m => {
+                if (m.role === 'system') addSystemMsg(m.text, false);
+                else if (m.role === 'user') addUserMsg(m.text, m.imageUrl, false);
+                else if (m.role === 'ai') addAiMsg(m.text, m.images, false);
+            });
+        }
+
+        document.querySelectorAll('.session-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.id === sessionId);
+        });
+    } catch(e) {
+    } finally {
+        $('sessionList').classList.remove('disabled');
+    }
+}
+
+async function deleteSession(sessionId) {
+    if (!confirm('确定删除该会话？')) return;
+    try {
+        await fetch('/api/chat-session/' + sessionId, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + authToken } });
+        await loadSessionList();
+        if (sessionId === currentSessionId) {
+            const listEl = $('sessionList');
+            const first = listEl.querySelector('.session-item');
+            if (first) await openSession(first.dataset.id);
+            else await createNewSession();
+        }
+    } catch(e) {}
+}
+
+// 持久化追加消息到当前会话
+async function persistMessage(msg) {
+    if (!currentSessionId) return;
+    try {
+        await fetch('/api/chat-session/' + currentSessionId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+            body: JSON.stringify({ appendMessage: msg })
+        });
+        // 刷新列表（名称可能更新了）
+        await loadSessionList();
+    } catch(e) {}
+}
+
+async function persistInitImage() {
+    if (!currentSessionId) return;
+    try {
+        await fetch('/api/chat-session/' + currentSessionId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+            body: JSON.stringify({ currentInitImage })
+        });
+    } catch(e) {}
+}
+
+// ===== Chat Messages =====
+function addSystemMsg(text, persist = true) {
+    const safeText = text.includes('<a ') ? text : escapeHtml(text);
+    $('chatBody').insertAdjacentHTML('beforeend',
+        `<div class="msg system"><div class="msg-bubble">${safeText}</div></div>`);
+    scrollToBottom();
+    if (persist) {
+        const msg = { role: 'system', text: text.replace(/<[^>]+>/g, ''), timestamp: Date.now() };
+        sessionMessages.push(msg);
+        persistMessage(msg);
+    }
+}
+
+function addUserMsg(text, imageUrl, persist = true) {
+    let imgHtml = imageUrl ? `<img class="chat-thumb" src="${imageUrl}" alt="" onclick="openImageModal('${imageUrl}')">` : '';
+    $('chatBody').insertAdjacentHTML('beforeend', `
+        <div class="msg user"><div class="msg-avatar">😊</div><div>
+            <div class="msg-bubble">${imgHtml}${escapeHtml(text)}</div>
+            <div class="msg-time">${formatTime()}</div>
+        </div></div>`);
+    scrollToBottom();
+    if (persist) {
+        const msg = { role: 'user', text, imageUrl, timestamp: Date.now() };
+        sessionMessages.push(msg);
+        persistMessage(msg);
+    }
+}
+
+function addAiMsg(text, images, persist = true) {
+    let imgHtml = '';
+    if (images && images.length > 0) {
+        imgHtml = `<div class="msg-images">${images.map(s =>
+            `<img class="chat-thumb" src="${s}" alt="" onclick="openImageModal('${s}')">`
+        ).join('')}</div>
+        <div class="msg-actions">
+            <button class="msg-action-btn" onclick="downloadImg('${images[0]}')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> 下载
+            </button>
+            <button class="msg-action-btn" onclick="openImageModal('${images[0]}')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> 预览
+            </button>
+        </div>`;
+    }
+    $('chatBody').insertAdjacentHTML('beforeend', `
+        <div class="msg ai"><div class="msg-avatar">✦</div><div>
+            <div class="msg-bubble">${imgHtml}${escapeHtml(text)}</div>
+            <div class="msg-time">${formatTime()}</div>
+        </div></div>`);
+    scrollToBottom();
+    if (persist) {
+        const msg = { role: 'ai', text, images, timestamp: Date.now() };
+        sessionMessages.push(msg);
+        persistMessage(msg);
+    }
+}
+
+function addLoadingMsg() {
+    const id = 'loading_' + Date.now();
+    $('chatBody').insertAdjacentHTML('beforeend', `
+        <div class="msg ai" id="${id}"><div class="msg-avatar">✦</div><div>
+            <div class="msg-bubble loading-bubble">
+                <div class="loading-dots"><span></span><span></span><span></span></div>
+                <div class="loading-text">AI 正在为你创作中...</div>
+            </div>
+        </div></div>`);
+    scrollToBottom();
+    return id;
+}
+
+// ===== Send =====
+// 从 prompt 中模糊识别模型
+function detectModel(text) {
+    const t = text.toLowerCase();
+    if (/flux\s*2|flux2klein|flux2/.test(t)) return 'flux2klein';
+    if (/\bz[\s-_]?image\b/.test(t)) return 'z-image';
+    if (/\bz\b/.test(t)) return 'z-image';
+    if (/flux/.test(t)) return 'flux2klein';
+    return null; // 未检测到则返回 null，使用默认
+}
+
+async function sendMessage() {
+    const input = $('chatInput');
+    const text = input.value.trim();
+    if (!text) { showToast('请输入提示词', 'warning'); return; }
+    if (isGenerating) return;
+
+    // 自动判断模式：有参考图走 img2img，没有走 text2img
+    const mode = currentInitImage ? 'img2img' : 'text2img';
+    // 优先用下拉框选择，prompt 中检测到则覆盖
+    const detectedModel = detectModel(text);
+    const model = detectedModel || $('modelSelect').value;
+
+    const sizeVal = $('sizeSelect').value;
+    const [w, h] = sizeVal.split('x').map(Number);
+
+    addUserMsg(text, null);
+    input.value = '';
+    autoResize(input);
+
+    isGenerating = true;
+    $('sendBtn').disabled = true;
+    $('sendBtn').classList.add('loading');
+    const loadingId = addLoadingMsg();
+
+    try {
+        const resp = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+            body: JSON.stringify({
+                prompt: text, width: w, height: h, num_images: 1,
+                initImage: currentInitImage, mode, model, sessionId: currentSessionId
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            const el = $(loadingId); if (el) el.remove();
+            let errMsg = data.error || '提交失败';
+            if (errMsg.includes('图片总数将超出限制')) {
+                errMsg += ' <a href="#" onclick="event.preventDefault();popupAction_clearImages()" style="color:var(--accent);text-decoration:underline;margin-left:6px;">一键清理图片</a>';
+            }
+            addSystemMsg(errMsg);
+            isGenerating = false; $('sendBtn').disabled = false; $('sendBtn').classList.remove('loading');
+            return;
+        }
+        showToast('已加入队列', 'success');
+        if (data.moneyLeft !== undefined) $('sidebarMoney').textContent = data.moneyLeft;
+        pendingLoadingId = loadingId;
+    } catch(e) {
+        const el = $(loadingId); if (el) el.remove();
+        addSystemMsg('网络错误: ' + e.message);
+        isGenerating = false; $('sendBtn').disabled = false; $('sendBtn').classList.remove('loading');
+    }
+}
+
+// ===== Popup Menu =====
+function togglePopupMenu() { $('popupMenu').classList.toggle('show'); }
+
+function popupAction_newSession() {
+    $('popupMenu').classList.remove('show');
+    createNewSession();
+}
+
+function popupAction_upload() {
+    $('popupMenu').classList.remove('show');
+    $('fileInput').click();
+}
+
+async function popupAction_clearImages() {
+    $('popupMenu').classList.remove('show');
+    if (!confirm('确定清理全部图片？此操作不可撤销。')) return;
+    try {
+        const resp = await fetch('/api/delete-all-images', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast(`已清理 ${data.deleted || 0} 张图片`, 'success');
+            currentInitImage = null;
+            fetchMoney();
+        } else {
+            showToast(data.error || '清理失败', 'error');
+        }
+    } catch(e) {
+        showToast('网络错误', 'error');
+    }
+}
+
+// ===== Upload =====
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (!file.type.match(/^image\/(png|jpeg|webp)$/)) { showToast('仅支持 PNG/JPG/WEBP', 'warning'); return; }
+    if (file.size > 10*1024*1024) { showToast('不能超过 10MB', 'warning'); return; }
+
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const resp = await fetch('/api/upload-ref-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+                body: JSON.stringify({ image: e.target.result })
+            });
+            const data = await resp.json();
+            if (!resp.ok) { showToast(data.error || '上传失败', 'error'); return; }
+
+            currentInitImage = window.location.origin + data.url;
+            await persistInitImage();
+
+            addUserMsg('上传了参考图', data.url);
+            addSystemMsg('参考图已更新，输入提示词即可开始编辑。');
+            showToast('上传成功', 'success');
+        } catch(err) { showToast('上传失败', 'error'); }
+        finally { $('fileInput').value = ''; }
+    };
+    reader.readAsDataURL(file);
+}
+
+// ===== SSE =====
+let sseSource = null;
+function connectSSE() {
+    if (sseSource) sseSource.close();
+    sseSource = new EventSource('/api/sse?token=' + encodeURIComponent(authToken));
+
+    sseSource.addEventListener('task_done', function(e) {
+        const data = JSON.parse(e.data);
+        if (pendingLoadingId) { const el = $(pendingLoadingId); if (el) el.remove(); pendingLoadingId = null; }
+        if (data.images && data.images.length > 0) {
+            currentInitImage = window.location.origin + data.images[0];
+            persistInitImage();
+            addAiMsg('', data.images);
+        }
+        isGenerating = false; $('sendBtn').disabled = false; $('sendBtn').classList.remove('loading');
+    });
+
+    sseSource.addEventListener('task_failed', function(e) {
+        const data = JSON.parse(e.data);
+        if (pendingLoadingId) { const el = $(pendingLoadingId); if (el) el.remove(); pendingLoadingId = null; }
+        addSystemMsg('生成失败: ' + (data.error || '未知错误'));
+        isGenerating = false; $('sendBtn').disabled = false; $('sendBtn').classList.remove('loading');
+    });
+
+    sseSource.onerror = function() { sseSource = null; setTimeout(connectSSE, 3000); };
+}
+
+// ===== Helpers =====
+function downloadImg(src) { const a = document.createElement('a'); a.href = src; a.download = 'ai-image-' + Date.now() + '.png'; a.click(); }
+
+// ===== Image Modal with Zoom =====
+let modalScale = 1, modalX = 0, modalY = 0;
+let modalDragging = false, modalDragStart = null;
+let pinchStartDist = 0, pinchStartScale = 1;
+const MIN_SCALE = 0.33, MAX_SCALE = 4;
+
+function openImageModal(src) {
+    const img = $('imgModalSrc');
+    img.src = src;
+    modalScale = 1; modalX = 0; modalY = 0;
+    applyModalTransform();
+    $('imgModal').classList.add('show');
+}
+
+function closeImageModal() { $('imgModal').classList.remove('show'); }
+
+function applyModalTransform() {
+    $('imgModalSrc').style.transform = `translate(${modalX}px, ${modalY}px) scale(${modalScale})`;
+    $('zoomHint').textContent = `${Math.round(modalScale * 100)}%`;
+}
+
+// 只在图片 wrap 上监听事件
+const _mwrap = () => $('modalImgWrap');
+
+// 鼠标滚轮缩放（居中锚点）
+document.addEventListener('wheel', function(e) {
+    if (!$('imgModal').classList.contains('show')) return;
+    if (!_mwrap().contains(e.target)) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.15 : 0.15;
+    modalScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, modalScale + delta));
+    applyModalTransform();
+}, { passive: false });
+
+// 鼠标拖拽（只在图片区域）
+document.addEventListener('mousedown', function(e) {
+    if (!$('imgModal').classList.contains('show')) return;
+    if (!_mwrap().contains(e.target)) return;
+    e.preventDefault();
+    modalDragging = true;
+    modalDragStart = { x: e.clientX - modalX, y: e.clientY - modalY };
+});
+document.addEventListener('mousemove', function(e) {
+    if (!modalDragging) return;
+    modalX = e.clientX - modalDragStart.x;
+    modalY = e.clientY - modalDragStart.y;
+    applyModalTransform();
+});
+document.addEventListener('mouseup', function() { modalDragging = false; });
+
+// 双指缩放（触屏，只在图片区域）
+document.addEventListener('touchstart', function(e) {
+    if (!$('imgModal').classList.contains('show')) return;
+    if (!_mwrap().contains(e.target)) return;
+    if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        pinchStartDist = Math.hypot(dx, dy);
+        pinchStartScale = modalScale;
+    } else if (e.touches.length === 1) {
+        modalDragging = true;
+        modalDragStart = { x: e.touches[0].clientX - modalX, y: e.touches[0].clientY - modalY };
+    }
+}, { passive: false });
+
+document.addEventListener('touchmove', function(e) {
+    if (!$('imgModal').classList.contains('show')) return;
+    if (e.touches.length === 2) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        modalScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * (dist / pinchStartDist)));
+        applyModalTransform();
+    } else if (e.touches.length === 1 && modalDragging) {
+        modalX = e.touches[0].clientX - modalDragStart.x;
+        modalY = e.touches[0].clientY - modalDragStart.y;
+        applyModalTransform();
+    }
+}, { passive: false });
+
+document.addEventListener('touchend', function() { modalDragging = false; });
+
+function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
+function scrollToBottom() { const b = $('chatBody'); requestAnimationFrame(() => b.scrollTop = b.scrollHeight); }
+function showToast(msg, type='error') { const t = $('toast'); t.textContent = msg; t.className = 'toast ' + type + ' show'; setTimeout(() => t.classList.remove('show'), 3000); }
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function formatTime() { const n = new Date(); return n.getHours().toString().padStart(2,'0') + ':' + n.getMinutes().toString().padStart(2,'0'); }
+async function fetchGlobalQueue() { try { const r = await fetch('/api/global-queue'); const d = await r.json(); $('globalQueueCount').textContent = d.totalActive; } catch(e) {} }
+</script>
+</body>
+</html>
